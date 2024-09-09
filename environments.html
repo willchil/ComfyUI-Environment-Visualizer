@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Environment Visualizer</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: black;
+        }
+        canvas { display: block; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label for="environmentDirectory">Environment selection:</label><br>
+        <select id="environmentDirectory"></select><br><br>
+
+        <label for="minDistance">Minimum distance: <span id="minValue">2.0</span>m</label><br>
+        <input type="range" id="minDistance" min="0.5" max="10" value="2.0" step="0.5"><br><br>
+
+        <label for="depthRange">Depth range: <span id="rangeValue">3.0</span>m</label><br>
+        <input type="range" id="depthRange" min="0" max="10" value="3.0" step="0.5"><br><br>
+
+        <label for="meshResolution">Mesh resolution: <span id="resolutionValue">1024</span></label><br>
+        <input type="range" id="meshResolution" min="0" max="8" value="2" step="1"><br><br>
+
+        <button id="refreshButton">Regenerate</button>
+    </div>
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js';
+        import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/webxr/VRButton.js';
+
+        let camera, scene, renderer;
+        let environmentTexture, depthTexture;
+        let minDistance = 2.0;
+        let depthRange = 3.0;
+        let resolution = 2;
+        let meshDirty = false;
+
+        let environmentMesh;
+        const resolutions = [512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192]
+
+        init();
+        animate();
+
+        async function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            renderer.xr.setReferenceSpaceType('local');
+
+            document.body.appendChild(renderer.domElement);
+            document.body.appendChild(VRButton.createButton(renderer));
+
+            const minDistanceSlider = document.getElementById('minDistance');
+            const depthRangeSlider = document.getElementById('depthRange');
+            const resolutionSlider = document.getElementById('meshResolution');
+            const environmentDirectorySelect = document.getElementById('environmentDirectory');
+
+            document.getElementById('refreshButton').onclick = createEnvironmentMesh;
+
+            minDistanceSlider.addEventListener('input', (event) => {
+                minDistance = parseFloat(event.target.value);
+                document.getElementById('minValue').textContent = minDistance;
+                setMeshDirty(true);
+            });
+            depthRangeSlider.addEventListener('input', (event) => {
+                depthRange = parseFloat(event.target.value);
+                document.getElementById('rangeValue').textContent = depthRange;
+                setMeshDirty(true);
+            });
+            resolutionSlider.addEventListener('input', (event) => {
+                resolution = parseInt(event.target.value);
+                document.getElementById('resolutionValue').textContent = resolutions[resolution];
+                setMeshDirty(true);
+            });
+
+            const directories = await fetchEnvironments(); // Replace with actual directory fetch
+            directories.forEach(dir => {
+                const option = document.createElement('option');
+                option.value = dir;
+                option.textContent = dir;
+                environmentDirectorySelect.appendChild(option);
+            });
+
+            environmentDirectorySelect.addEventListener('change', (event) => {
+                loadEnvironmentTextures(event.target.value);
+            });
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const directory = urlParams.get('env') || directories[0];
+            environmentDirectorySelect.value = directory;
+
+            loadEnvironmentTextures(directory);
+
+            window.addEventListener('resize', onWindowResize, false);
+
+            // Recreate the mesh when entering VR
+            renderer.xr.addEventListener('sessionstart', () => {
+                if (meshDirty) {
+                    createEnvironmentMesh(); // Generate new mesh with updated settings
+                }
+            });
+        }
+
+        async function fetchEnvironments() {
+            const response = await fetch('/list_environments');
+            const data = await response.json();
+            return data['environments'];
+        }
+
+        function setMeshDirty(dirty) {
+            meshDirty = dirty;
+            const refreshButton = document.getElementById('refreshButton');
+            refreshButton.disabled = !meshDirty;
+        }
+
+        function loadEnvironmentTextures(environment) {
+            const textureLoader = new THREE.TextureLoader();
+            textureLoader.load(`environments/${environment}/skybox.png`, (texture) => {
+                environmentTexture = texture;
+
+                textureLoader.load(`environments/${environment}/depth.png`, (texture) => {
+                    depthTexture = texture;
+                    createEnvironmentMesh();
+                });
+            });
+        }
+
+        // Function to create the sphere mesh with current settings
+        function createEnvironmentMesh() {
+            // Remove the previous environment mesh if it exists
+            if (environmentMesh) {
+                scene.remove(environmentMesh);
+                environmentMesh.geometry.dispose();
+                environmentMesh.material.dispose();
+            }
+
+            // Create new sphere geometry with the selected resolution
+            const verticesTheta = Math.min(resolutions[resolution], depthTexture.image.width)
+            const verticesPhi = Math.min(resolutions[resolution] / 2, depthTexture.image.height)
+            const sphereGeometry = new THREE.SphereGeometry(1, verticesTheta, verticesPhi);
+            sphereGeometry.scale(-1, 1, 1); // Invert the sphere
+
+            const material = new THREE.MeshBasicMaterial({ map: environmentTexture });
+            environmentMesh = new THREE.Mesh(sphereGeometry, material);
+
+            scene.add(environmentMesh);
+
+            // Apply depth distortion to the new geometry
+            applyDepthDistortion(sphereGeometry, depthTexture);
+
+            setMeshDirty(false);
+        }
+
+        function applyDepthDistortion(geometry, depthMap) {
+            const positionAttribute = geometry.attributes.position;
+            const uv = geometry.attributes.uv;
+            const depthData = getDepthData(depthMap);
+
+            for (let i = 0; i < positionAttribute.count; i++) {
+                const x = positionAttribute.getX(i);
+                const y = positionAttribute.getY(i);
+                const z = positionAttribute.getZ(i);
+
+                const u = uv.getX(i);
+                const v = 1 - uv.getY(i); // Flip v coordinate
+
+                const depthValue = 1 - sampleDepth(depthData, u, v); // Invert depth value
+
+                // Adjust based on the slider-controlled minDistance and depthRange
+                const distortionFactor = minDistance + depthValue * depthRange;
+
+                positionAttribute.setXYZ(i, x * distortionFactor, y * distortionFactor, z * distortionFactor);
+            }
+
+            positionAttribute.needsUpdate = true;
+        }
+
+        function getDepthData(depthTexture) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = depthTexture.image.width;
+            canvas.height = depthTexture.image.height;
+            ctx.drawImage(depthTexture.image, 0, 0);
+            return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        }
+
+        function sampleDepth(depthData, u, v) {
+            const width = depthTexture.image.width;
+            const height = depthTexture.image.height;
+            const x = Math.floor(u * width);
+            const y = Math.floor(v * height);
+            const index = (y * width + x) * 4;
+            return depthData[index] / 255; // Normalize to 0-1 range
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            renderer.setAnimationLoop(render);
+        }
+
+        function render() {
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
