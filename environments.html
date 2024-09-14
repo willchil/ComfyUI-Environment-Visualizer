@@ -17,6 +17,7 @@
             background: rgba(255, 255, 255, 0.9);
             padding: 10px;
             border-radius: 8px;
+            z-index: 1; /* Ensure controls are above the canvas */
         }
     </style>
 </head>
@@ -51,6 +52,9 @@
 
         const rotation_angle = 30;
         const resolutions = [512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192];
+
+        // Initialize a Map to track controller states for snap rotation
+        const controllerStates = new Map();
 
         init();
         animate();
@@ -268,9 +272,50 @@
         }
 
         function render() {
+            if (renderer.xr.isPresenting) {
+                processControllerInput();
+            }
             renderer.render(scene, camera);
         }
 
+        function processControllerInput() {
+            const session = renderer.xr.getSession();
+            if (session) {
+                const inputSources = session.inputSources;
+                inputSources.forEach(inputSource => {
+                    if (inputSource && inputSource.gamepad) {
+                        // Initialize state for this controller if not already done
+                        if (!controllerStates.has(inputSource)) {
+                            controllerStates.set(inputSource, { rotatedLeft: false, rotatedRight: false });
+                        }
+                        const state = controllerStates.get(inputSource);
+
+                        const gp = inputSource.gamepad;
+                        const axisX = gp.axes[2];
+                        const deadzone = 0.2; // Threshold to prevent unintended rotations
+
+                        if (axisX < -deadzone) { // Joystick pushed to the left
+                            if (!state.rotatedLeft) {
+                                rotateSceneLeft();
+                                state.rotatedLeft = true;
+                            }
+                        } else if (axisX > deadzone) { // Joystick pushed to the right
+                            if (!state.rotatedRight) {
+                                rotateSceneRight();
+                                state.rotatedRight = true;
+                            }
+                        } else { // Joystick is in the center
+                            // Reset rotation state to allow new rotations
+                            if (state.rotatedLeft || state.rotatedRight) {
+                                state.rotatedLeft = false;
+                                state.rotatedRight = false;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        
         // Handle keyboard input
         function onKeyDown(event) {
             switch (event.code) {
