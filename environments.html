@@ -46,9 +46,11 @@
         let depthRange = 3.0;
         let resolution = 2;
         let meshDirty = false;
-
         let environmentMesh;
-        const resolutions = [512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192]
+        let rotationGroup;
+
+        const rotation_angle = 30;
+        const resolutions = [512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192];
 
         init();
         animate();
@@ -64,6 +66,9 @@
 
             document.body.appendChild(renderer.domElement);
             document.body.appendChild(VRButton.createButton(renderer));
+
+            rotationGroup = new THREE.Group(); // Initialize rotation group
+            scene.add(rotationGroup);
 
             const minDistanceSlider = document.getElementById('minDistance');
             const depthRangeSlider = document.getElementById('depthRange');
@@ -114,6 +119,9 @@
                     createEnvironmentMesh(); // Generate new mesh with updated settings
                 }
             });
+
+            // Event listener for keyboard input
+            window.addEventListener('keydown', onKeyDown, false);
         }
 
         async function fetchEnvironments() {
@@ -129,14 +137,27 @@
         }
 
         function loadEnvironmentTextures(environment) {
-            const textureLoader = new THREE.TextureLoader();
-            textureLoader.load(`environments/${environment}/skybox.png`, (texture) => {
-                environmentTexture = texture;
+            const imageLoader = new THREE.ImageLoader();
+            imageLoader.setCrossOrigin('anonymous');
 
-                textureLoader.load(`environments/${environment}/depth.png`, (texture) => {
-                    depthTexture = texture;
-                    createEnvironmentMesh();
-                });
+            const skyboxPromise = new Promise((resolve, reject) => {
+                imageLoader.load(`environments/${environment}/skybox.png`, resolve, undefined, reject);
+            });
+
+            const depthPromise = new Promise((resolve, reject) => {
+                imageLoader.load(`environments/${environment}/depth.png`, resolve, undefined, reject);
+            });
+
+            Promise.all([skyboxPromise, depthPromise]).then(([skyboxImage, depthImage]) => {
+                environmentTexture = new THREE.Texture(skyboxImage);
+                environmentTexture.needsUpdate = true;
+
+                depthTexture = new THREE.Texture(depthImage);
+                depthTexture.needsUpdate = true;
+
+                createEnvironmentMesh();
+            }).catch((error) => {
+                console.error('Error loading images:', error);
             });
         }
 
@@ -144,21 +165,21 @@
         function createEnvironmentMesh() {
             // Remove the previous environment mesh if it exists
             if (environmentMesh) {
-                scene.remove(environmentMesh);
+                rotationGroup.remove(environmentMesh);
                 environmentMesh.geometry.dispose();
                 environmentMesh.material.dispose();
             }
 
             // Create new sphere geometry with the selected resolution
-            const verticesTheta = Math.min(resolutions[resolution], depthTexture.image.width)
-            const verticesPhi = Math.min(resolutions[resolution] / 2, depthTexture.image.height)
+            const verticesTheta = Math.min(resolutions[resolution], depthTexture.image.width);
+            const verticesPhi = Math.min(resolutions[resolution] / 2, depthTexture.image.height);
             const sphereGeometry = new THREE.SphereGeometry(1, verticesTheta, verticesPhi);
             sphereGeometry.scale(-1, 1, 1); // Invert the sphere
 
             const material = new THREE.MeshBasicMaterial({ map: environmentTexture });
             environmentMesh = new THREE.Mesh(sphereGeometry, material);
 
-            scene.add(environmentMesh);
+            rotationGroup.add(environmentMesh);
 
             // Apply depth distortion to the new geometry
             applyDepthDistortion(sphereGeometry, depthTexture);
@@ -167,9 +188,14 @@
         }
 
         function applyDepthDistortion(geometry, depthMap) {
+            const depthData = getDepthData(depthMap);
+            if (!depthData) {
+                console.error('Depth data is invalid. Skipping depth distortion.');
+                return;
+            }
+
             const positionAttribute = geometry.attributes.position;
             const uv = geometry.attributes.uv;
-            const depthData = getDepthData(depthMap);
 
             for (let i = 0; i < positionAttribute.count; i++) {
                 const x = positionAttribute.getX(i);
@@ -179,10 +205,11 @@
                 const u = uv.getX(i);
                 const v = 1 - uv.getY(i); // Flip v coordinate
 
-                const depthValue = 1 - sampleDepth(depthData, u, v); // Invert depth value
+                let depthValue = 1 - sampleDepth(depthData, u, v); // Invert depth value
+                if (isNaN(depthValue)) depthValue = 0;
 
-                // Adjust based on the slider-controlled minDistance and depthRange
                 const distortionFactor = minDistance + depthValue * depthRange;
+                if (isNaN(distortionFactor)) continue;
 
                 positionAttribute.setXYZ(i, x * distortionFactor, y * distortionFactor, z * distortionFactor);
             }
@@ -191,12 +218,25 @@
         }
 
         function getDepthData(depthTexture) {
+            const image = depthTexture.image;
+            if (!image || !image.width || !image.height) {
+                console.error('Depth texture image is not properly loaded.');
+                return null;
+            }
+
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = depthTexture.image.width;
-            canvas.height = depthTexture.image.height;
-            ctx.drawImage(depthTexture.image, 0, 0);
-            return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            canvas.width = image.width;
+            canvas.height = image.height;
+            ctx.drawImage(image, 0, 0);
+
+            try {
+                const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                return data;
+            } catch (e) {
+                console.error('Failed to get depth data:', e);
+                return null;
+            }
         }
 
         function sampleDepth(depthData, u, v) {
@@ -204,7 +244,16 @@
             const height = depthTexture.image.height;
             const x = Math.floor(u * width);
             const y = Math.floor(v * height);
+
+            if (x < 0 || x >= width || y < 0 || y >= height) {
+                return 0;
+            }
+
             const index = (y * width + x) * 4;
+            if (index < 0 || index >= depthData.length) {
+                return 0;
+            }
+
             return depthData[index] / 255; // Normalize to 0-1 range
         }
 
@@ -220,6 +269,36 @@
 
         function render() {
             renderer.render(scene, camera);
+        }
+
+        // Handle keyboard input
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'ArrowLeft':
+                case 'KeyA':
+                    rotateSceneLeft();
+                    event.preventDefault();
+                    break;
+                case 'ArrowRight':
+                case 'KeyD':
+                    rotateSceneRight();
+                    event.preventDefault();
+                    break;
+                case 'ArrowDown':
+                case 'ArrowUp':
+                    event.preventDefault();
+                    break;
+            }
+        }
+
+        // Rotate the scene left
+        function rotateSceneLeft() {
+            rotationGroup.rotation.y -= THREE.MathUtils.degToRad(rotation_angle);
+        }
+
+        // Rotate the scene right
+        function rotateSceneRight() {
+            rotationGroup.rotation.y += THREE.MathUtils.degToRad(rotation_angle);
         }
     </script>
 </body>
