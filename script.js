@@ -2,7 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.m
 import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/webxr/VRButton.js';
 
 let camera, scene, renderer;
-let environmentTexture, depthTexture;
+let environmentTexture, depthTexture = null; // Initialize depthTexture as null
 let minDistance = 2.0;
 let depthRange = 3.0;
 let resolution = 2;
@@ -104,24 +104,42 @@ function loadEnvironmentTextures(environment) {
     const imageLoader = new THREE.ImageLoader();
     imageLoader.setCrossOrigin('anonymous');
 
+    // Load skybox.png
     const skyboxPromise = new Promise((resolve, reject) => {
         imageLoader.load(`environments/${environment}/skybox.png`, resolve, undefined, reject);
     });
 
-    const depthPromise = new Promise((resolve, reject) => {
-        imageLoader.load(`environments/${environment}/depth.png`, resolve, undefined, reject);
+    // Load depth.png, but resolve to null if it fails (making depth optional)
+    const depthPromise = new Promise((resolve) => {
+        imageLoader.load(`environments/${environment}/depth.png`, resolve, undefined, () => {
+            console.warn(`Depth map not found for environment "${environment}". Proceeding without depth deformation.`);
+            resolve(null); // Resolve with null if depth.png is not found
+        });
     });
 
     Promise.all([skyboxPromise, depthPromise]).then(([skyboxImage, depthImage]) => {
+        // Set environment texture
         environmentTexture = new THREE.Texture(skyboxImage);
         environmentTexture.needsUpdate = true;
 
-        depthTexture = new THREE.Texture(depthImage);
-        depthTexture.needsUpdate = true;
+        if (depthImage) {
+            // If depthImage is loaded, set depthTexture
+            depthTexture = new THREE.Texture(depthImage);
+            depthTexture.needsUpdate = true;
+        } else {
+            // If depthImage is not available, set depthTexture to null
+            depthTexture = null;
+        }
+
+        // Only enable configuration options if depth data is available
+        const elements = ['minDistance', 'depthRange', 'meshResolution', 'refreshButton'];
+        for (let element of elements) {
+            document.getElementById(element).disabled = !depthImage;
+        }
 
         createEnvironmentMesh();
     }).catch((error) => {
-        console.error('Error loading images:', error);
+        console.error('Error loading skybox image:', error);
     });
 }
 
@@ -134,19 +152,33 @@ function createEnvironmentMesh() {
         environmentMesh.material.dispose();
     }
 
+    // Determine geometry resolution based on whether depthTexture is available
+    let verticesTheta, verticesPhi;
+    if (depthTexture && depthTexture.image) {
+        verticesTheta = Math.min(resolutions[resolution], depthTexture.image.width);
+        verticesPhi = Math.min(Math.floor(resolutions[resolution] / 2), depthTexture.image.height);
+    } else {
+        // Fallback to default resolution
+        verticesTheta = resolutions[0];
+        verticesPhi = Math.floor(resolutions[0] / 2);
+    }
+
     // Create new sphere geometry with the selected resolution
-    const verticesTheta = Math.min(resolutions[resolution], depthTexture.image.width);
-    const verticesPhi = Math.min(resolutions[resolution] / 2, depthTexture.image.height);
     const sphereGeometry = new THREE.SphereGeometry(1, verticesTheta, verticesPhi);
-    sphereGeometry.scale(-1, 1, 1); // Invert the sphere
+    const scale = depthTexture ? 1 : 100;
+    sphereGeometry.scale(-scale, scale, scale); // Invert the sphere
 
     const material = new THREE.MeshBasicMaterial({ map: environmentTexture });
     environmentMesh = new THREE.Mesh(sphereGeometry, material);
 
     rotationGroup.add(environmentMesh);
 
-    // Apply depth distortion to the new geometry
-    applyDepthDistortion(sphereGeometry, depthTexture);
+    // Apply depth distortion only if depthTexture is available
+    if (depthTexture) {
+        applyDepthDistortion(sphereGeometry, depthTexture);
+    } else {
+        console.log('Creating environment mesh without depth deformation.');
+    }
 
     setMeshDirty(false);
 }
