@@ -161,6 +161,7 @@ function applyDepthDistortion(geometry, depthMap) {
     const positionAttribute = geometry.attributes.position;
     const uv = geometry.attributes.uv;
 
+    // Apply depth distortion to all vertices
     for (let i = 0; i < positionAttribute.count; i++) {
         const x = positionAttribute.getX(i);
         const y = positionAttribute.getY(i);
@@ -176,6 +177,23 @@ function applyDepthDistortion(geometry, depthMap) {
         if (isNaN(distortionFactor)) continue;
 
         positionAttribute.setXYZ(i, x * distortionFactor, y * distortionFactor, z * distortionFactor);
+    }
+
+    // Synchronize seam vertices to remove the gap
+    const widthSegments = geometry.parameters.widthSegments;
+    const heightSegments = geometry.parameters.heightSegments;
+
+    for (let phi = 0; phi <= heightSegments; phi++) {
+        const firstIndex = phi * (widthSegments + 1);
+        const lastIndex = firstIndex + widthSegments;
+
+        // Get the position from the first vertex in the ring
+        const x = positionAttribute.getX(firstIndex);
+        const y = positionAttribute.getY(firstIndex);
+        const z = positionAttribute.getZ(firstIndex);
+
+        // Set the position of the last vertex in the ring to match the first
+        positionAttribute.setXYZ(lastIndex, x, y, z);
     }
 
     positionAttribute.needsUpdate = true;
