@@ -14,9 +14,11 @@ class EnvironmentVisualizer:
         return {
             "required": {
                 "texture": ("IMAGE", ),
-                "depth": ("IMAGE", ),
                 "name": ("STRING", ),
                 "open_visualizer": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
+            },
+            "optional": {
+                "depth": ("IMAGE", ),
             }
         }
                
@@ -47,8 +49,8 @@ class EnvironmentVisualizer:
         return new_name
 
 
-    def save_environment(self, texture, depth, name, open_visualizer):
-        if texture.shape[0] != depth.shape[0]:
+    def save_environment(self, texture, name, open_visualizer, depth=None):
+        if depth and texture.shape[0] != depth.shape[0]:
             raise Exception("Number of environment textures and depth maps must be equivalent.")
         
         if name:
@@ -57,14 +59,15 @@ class EnvironmentVisualizer:
             if len(name) > 25:
                 name = name[:25] + '...'
         else:
-            name = str(time.time())
+            name = str(int(time.time()))
 
         for (batch_number, texture1) in enumerate(texture):
             new_name = self.get_unique_name(self.save_directory, name)
             new_directory = os.path.join(self.save_directory, new_name)
             os.makedirs(new_directory)
             self.save_tensor_image(texture1, os.path.join(new_directory, 'skybox.png'))
-            self.save_tensor_image(depth[batch_number], os.path.join(new_directory, 'depth.png'))
+            if depth:
+                self.save_tensor_image(depth[batch_number], os.path.join(new_directory, 'depth.png'))
         
         if open_visualizer:
             webbrowser.open(f"https://{get_lan_ip()}:{SERVER_PORT}/environments.html?env={new_name}")
