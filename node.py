@@ -1,11 +1,19 @@
 from .server import get_lan_ip
 from .server import SERVER_PORT
+from server import PromptServer
+from aiohttp import web
 from PIL import Image
 import os
 import numpy as np
 import webbrowser
 import time
 import re
+
+
+@PromptServer.instance.routes.post("/get_url")
+async def get_url(_):
+    return web.json_response({"port": str(SERVER_PORT)})
+
 
 class EnvironmentVisualizer:
 
@@ -15,7 +23,7 @@ class EnvironmentVisualizer:
             "required": {
                 "texture": ("IMAGE", ),
                 "name": ("STRING", ),
-                "open_visualizer": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
+                "open_automatically": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
             },
             "optional": {
                 "depth": ("IMAGE", ),
@@ -49,7 +57,7 @@ class EnvironmentVisualizer:
         return new_name
 
 
-    def save_environment(self, texture, name, open_visualizer, depth=None):
+    def save_environment(self, texture, name, open_automatically, depth=None):
         if depth and texture.shape[0] != depth.shape[0]:
             raise Exception("Number of environment textures and depth maps must be equivalent.")
         
@@ -69,7 +77,7 @@ class EnvironmentVisualizer:
             if depth:
                 self.save_tensor_image(depth[batch_number], os.path.join(new_directory, 'depth.png'))
         
-        if open_visualizer:
+        if open_automatically:
             webbrowser.open(f"https://{get_lan_ip()}:{SERVER_PORT}/environments.html?env={new_name}")
 
         return {}
