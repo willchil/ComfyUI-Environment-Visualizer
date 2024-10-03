@@ -5,7 +5,6 @@ from aiohttp import web
 from PIL import Image
 import os
 import numpy as np
-import webbrowser
 import time
 import re
 
@@ -58,7 +57,7 @@ class EnvironmentVisualizer:
 
 
     def save_environment(self, texture, name, open_automatically, depth=None):
-        if depth and texture.shape[0] != depth.shape[0]:
+        if depth is not None and texture.shape[0] != depth.shape[0]:
             raise Exception("Number of environment textures and depth maps must be equivalent.")
         
         if name:
@@ -70,17 +69,21 @@ class EnvironmentVisualizer:
             name = str(int(time.time()))
 
         for (batch_number, texture1) in enumerate(texture):
-            new_name = self.get_unique_name(self.save_directory, name)
-            new_directory = os.path.join(self.save_directory, new_name)
+            name = self.get_unique_name(self.save_directory, name)
+            new_directory = os.path.join(self.save_directory, name)
             os.makedirs(new_directory)
             self.save_tensor_image(texture1, os.path.join(new_directory, 'skybox.png'))
-            if depth:
+            if depth is not None:
                 self.save_tensor_image(depth[batch_number], os.path.join(new_directory, 'depth.png'))
         
         if open_automatically:
-            webbrowser.open(f"https://{get_lan_ip()}:{SERVER_PORT}/environments.html?env={new_name}")
-
-        return {}
+            completion_data = {
+                "env_name": name,
+                "env_port": str(SERVER_PORT)
+            }
+            return { "ui": completion_data }
+        else:
+            return {}
     
 
 
@@ -106,8 +109,8 @@ class InterpolateEdges:
         smoothed = image.clone()
         B, H, W, C = smoothed.shape
         
-        # Ensure smoothing_pixels is valid
-        assert distance <= W // 2, "Smoothing pixels must be less than half of the image width."
+        # Ensure smoothing distance fits within the image
+        distance = min(distance, W // 2)
 
         # Iterate over each image in the batch
         for b in range(B):
