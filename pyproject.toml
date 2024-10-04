@@ -9,6 +9,6 @@ Repository = "https://github.com/willchil/ComfyUI-Environment-Visualizer"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "willchil"
 DisplayName = "ComfyUI-Environment-Visualizer"
 Icon = ""
