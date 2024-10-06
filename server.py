@@ -57,7 +57,7 @@ def run_https_server():
     # Wrap the socket
     httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
     
-    print(f"Serving HTTPS on https://{get_lan_ip()}:{SERVER_PORT}")
+    print(f"Serving Environment Visualizer HTTPS on https://{get_lan_ip()}:{SERVER_PORT}")
     httpd.serve_forever()
 
 def get_lan_ip():

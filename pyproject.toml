@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-environment-visualizer"
 description = "This ComfyUI node pack allows the user to take a panoramic image and a corresponding depth map, and turn them into a 3D environment, which they can view in an immersive WebXR environment."
-version = "1.0.0"
+version = "1.1.0"
 license = {file = "LICENSE"}
 
 [project.urls]

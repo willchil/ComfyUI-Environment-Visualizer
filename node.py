@@ -1,18 +1,65 @@
-from .server import get_lan_ip
 from .server import SERVER_PORT
+from .map_equirectangular import map_equirectangular
+
 from server import PromptServer
+
 from aiohttp import web
 from PIL import Image
 import os
 import numpy as np
 import time
 import re
+import torch
 
 
 @PromptServer.instance.routes.post("/get_url")
 async def get_url(_):
     return web.json_response({"port": str(SERVER_PORT)})
 
+
+class MapEquirectangular:
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE", ),
+                "equirectangular_width": ("INT", {"default": 2048}),
+                "hfov": ("FLOAT", {"default": 60.0, "min": 0.0, "max": 180.0, "step": 1.0}),
+                "yaw": ("FLOAT", {"default": 0.0, "min": -180.0, "max": 180.0, "step": 1.0}),
+                "pitch": ("FLOAT", {"default": 0.0, "min": -90.0, "max": 90.0, "step": 1.0}),
+                "roll": ("FLOAT", {"default": 0.0, "min": -180.0, "max": 180.0, "step": 1.0})
+            },
+        }
+    
+    RETURN_TYPES = ("IMAGE", )
+    OUTPUT_NODE = False
+    FUNCTION = "map"
+    CATEGORY = "image/equirectangular"
+    DESCRIPTION = "Takes an image and some camera parameters, and projects it onto an equirectangular image."
+
+    def map(self, image, equirectangular_width, hfov, yaw, pitch, roll):
+
+        B = image.shape[0]
+        processed_images = []
+
+        for i in range(B):
+            # Process the image using the method
+            processed_image = map_equirectangular(
+                image[i],
+                hfov,
+                yaw,
+                pitch,
+                roll,
+                equirectangular_width
+            )
+            # Append the processed image to the list
+            processed_images.append(processed_image)
+
+        # Aggregate the processed images into a tensor of shape [B, H, W, C]
+        output_tensor = torch.stack(processed_images, dim=0)
+
+        return (output_tensor,)
 
 class EnvironmentVisualizer:
 
@@ -32,7 +79,7 @@ class EnvironmentVisualizer:
     RETURN_TYPES = ()
     OUTPUT_NODE = True
     FUNCTION = "save_environment"
-    CATEGORY = "image"
+    CATEGORY = "image/equirectangular"
     DESCRIPTION = "Saves the texture and depth map, to be viewed in an immersive WebXR environment."
 
     save_directory = os.path.join(os.path.dirname(__file__), 'environments')
@@ -83,8 +130,7 @@ class EnvironmentVisualizer:
             }
             return { "ui": completion_data }
         else:
-            return {}
-    
+            return {}    
 
 
 class InterpolateEdges:
@@ -100,7 +146,7 @@ class InterpolateEdges:
                
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "interpolate_edges"
-    CATEGORY = "image"
+    CATEGORY = "image/equirectangular"
     DESCRIPTION = "Make the vertical edges of the given images blend seamlessly, using linear interpolation. Works best with depth maps."
 
     def interpolate_edges(self, image, distance):
