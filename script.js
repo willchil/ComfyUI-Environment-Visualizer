@@ -2,7 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.m
 import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/webxr/VRButton.js';
 
 let camera, scene, renderer;
-let environmentTexture, depthTexture = null; // Initialize depthTexture as null
+let environmentTexture, depthTexture = null;
 let minDistance = 2.0;
 let depthRange = 3.0;
 let resolution = 2;
@@ -10,11 +10,8 @@ let meshDirty = false;
 let environmentMesh;
 let rotationGroup;
 
-const rotation_angle = 30; // in degrees
+const rotation_angle = 30; // Degrees
 const resolutions = [512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192];
-
-// Initialize a Map to track controller states for snap rotation
-const controllerStates = new Map();
 
 // Variables for mouse interaction
 let isUserInteracting = false,
@@ -28,6 +25,11 @@ let isUserInteracting = false,
 // Sensitivity parameters
 let rotationSensitivityX = 0.1; // Horizontal rotation sensitivity
 let rotationSensitivityY = 0.1; // Vertical rotation sensitivity
+
+const controllers = []; // Array to hold controllers
+const controllerStates = new Map(); // Map to hold controller states
+
+const max_lat = 85;
 
 init();
 animate();
@@ -70,7 +72,7 @@ async function init() {
         setMeshDirty(true);
     });
 
-    const directories = await fetchEnvironments(); // Replace with actual directory fetch
+    const directories = await fetchEnvironments();
     directories.forEach(dir => {
         const option = document.createElement('option');
         option.value = dir;
@@ -106,10 +108,19 @@ async function init() {
     renderer.domElement.addEventListener('mouseup', onPointerUp, false);
     renderer.domElement.addEventListener('mouseleave', onPointerUp, false);
 
-    // Optional: Event listeners for touch interaction (mobile devices)
+    // Event listeners for touch interaction (mobile devices)
     renderer.domElement.addEventListener('touchstart', onPointerDown, false);
     renderer.domElement.addEventListener('touchmove', onPointerMove, false);
     renderer.domElement.addEventListener('touchend', onPointerUp, false);
+
+    // Initialize controllers
+    for (let i = 0; i <= 1; i++) {
+        const controller = renderer.xr.getController(i);
+        controller.addEventListener('selectstart', onSelectStart);
+        controller.addEventListener('selectend', onSelectEnd);
+        scene.add(controller);
+        controllers.push(controller);
+    }
 }
 
 async function fetchEnvironments() {
@@ -321,6 +332,8 @@ function processControllerInput() {
     const session = renderer.xr.getSession();
     if (session) {
         const inputSources = session.inputSources;
+
+        // Handle joystick snap rotation
         inputSources.forEach(inputSource => {
             if (inputSource && inputSource.gamepad) {
                 // Initialize state for this controller if not already done
@@ -349,6 +362,52 @@ function processControllerInput() {
                         state.rotatedLeft = false;
                         state.rotatedRight = false;
                     }
+                }
+            }
+        });
+
+        // Handle trigger drag rotation
+        controllers.forEach(controller => {
+            if (controller.userData.isSelecting) {
+                if (controller.userData.needsInitialPosition) {
+                    // Record initial positions
+                    const initialHeadPosition = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+                    const initialControllerPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+
+                    // Compute initial vector from head to controller
+                    const initialControllerVector = new THREE.Vector3().subVectors(initialControllerPosition, initialHeadPosition);
+
+                    // Project onto XZ plane
+                    initialControllerVector.y = 0;
+                    if (initialControllerVector.lengthSq() === 0) return; // Avoid division by zero
+                    initialControllerVector.normalize();
+
+                    controller.userData.initialControllerVectorXZ = initialControllerVector;
+                    controller.userData.needsInitialPosition = false;
+                    controller.userData.initialLon = lon; // Store initial lon
+                } else {
+                    // Get current positions
+                    const currentHeadPosition = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+                    const currentControllerPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+
+                    // Compute current vector from head to controller
+                    const currentControllerVector = new THREE.Vector3().subVectors(currentControllerPosition, currentHeadPosition);
+
+                    // Project onto XZ plane
+                    currentControllerVector.y = 0;
+                    if (currentControllerVector.lengthSq() === 0) return; // Avoid division by zero
+                    currentControllerVector.normalize();
+
+                    // Compute angle difference between initial and current vectors
+                    const initialVector = controller.userData.initialControllerVectorXZ;
+                    const dot = initialVector.dot(currentControllerVector);
+                    const crossY = initialVector.x * currentControllerVector.z - initialVector.z * currentControllerVector.x; // Cross product in Y
+
+                    let angle = Math.atan2(crossY, dot); // Angle in radians
+                    angle = THREE.MathUtils.radToDeg(angle); // Convert to degrees
+
+                    // Invert the angle to change rotation direction
+                    lon = controller.userData.initialLon - angle;
                 }
             }
         });
@@ -383,25 +442,26 @@ function onKeyDown(event) {
 
 // Rotate the scene left
 function rotateSceneLeft() {
-    lon -= rotation_angle; // Adjust lon instead of rotationGroup.rotation.y
+    lon -= rotation_angle;
 }
 
 // Rotate the scene right
 function rotateSceneRight() {
-    lon += rotation_angle; // Adjust lon instead of rotationGroup.rotation.y
+    lon += rotation_angle;
 }
 
-// Optional: Rotate the scene up and down using keyboard
+// Rotate the scene up
 function rotateSceneUp() {
-    lat += rotation_angle; // Adjust lat
+    lat += rotation_angle;
     // Clamp latitude to prevent flipping over the poles
-    lat = Math.max(-85, Math.min(85, lat));
+    lat = Math.max(-max_lat, Math.min(max_lat, lat));
 }
 
+// Rotate the scene down
 function rotateSceneDown() {
-    lat -= rotation_angle; // Adjust lat
+    lat -= rotation_angle;
     // Clamp latitude to prevent flipping over the poles
-    lat = Math.max(-85, Math.min(85, lat));
+    lat = Math.max(-max_lat, Math.min(max_lat, lat));
 }
 
 // Mouse and touch event handlers for rotation
@@ -436,10 +496,23 @@ function onPointerMove(event) {
         lat = (onPointerDownMouseY - clientY) * rotationSensitivityY + onPointerDownLat;
 
         // Clamp latitude to prevent flipping over the poles
-        lat = Math.max(-85, Math.min(85, lat));
+        lat = Math.max(-max_lat, Math.min(max_lat, lat));
     }
 }
 
 function onPointerUp() {
     isUserInteracting = false;
+}
+
+function onSelectStart(event) {
+    const controller = event.target;
+    controller.userData.isSelecting = true;
+    controller.userData.needsInitialPosition = true; // We need to record initial positions in the next frame
+}
+
+function onSelectEnd(event) {
+    const controller = event.target;
+    controller.userData.isSelecting = false;
+    controller.userData.initialControllerVectorXZ = null;
+    controller.userData.needsInitialPosition = false;
 }
