@@ -10,11 +10,24 @@ let meshDirty = false;
 let environmentMesh;
 let rotationGroup;
 
-const rotation_angle = 30;
+const rotation_angle = 30; // in degrees
 const resolutions = [512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192];
 
 // Initialize a Map to track controller states for snap rotation
 const controllerStates = new Map();
+
+// Variables for mouse interaction
+let isUserInteracting = false,
+    onPointerDownMouseX = 0,
+    onPointerDownMouseY = 0,
+    lon = 0,
+    lat = 0,
+    onPointerDownLon = 0,
+    onPointerDownLat = 0;
+
+// Sensitivity parameters
+let rotationSensitivityX = 0.1; // Horizontal rotation sensitivity
+let rotationSensitivityY = 0.1; // Vertical rotation sensitivity
 
 init();
 animate();
@@ -86,6 +99,17 @@ async function init() {
 
     // Event listener for keyboard input
     window.addEventListener('keydown', onKeyDown, false);
+
+    // Event listeners for mouse interaction
+    renderer.domElement.addEventListener('mousedown', onPointerDown, false);
+    renderer.domElement.addEventListener('mousemove', onPointerMove, false);
+    renderer.domElement.addEventListener('mouseup', onPointerUp, false);
+    renderer.domElement.addEventListener('mouseleave', onPointerUp, false);
+
+    // Optional: Event listeners for touch interaction (mobile devices)
+    renderer.domElement.addEventListener('touchstart', onPointerDown, false);
+    renderer.domElement.addEventListener('touchmove', onPointerMove, false);
+    renderer.domElement.addEventListener('touchend', onPointerUp, false);
 }
 
 async function fetchEnvironments() {
@@ -285,6 +309,11 @@ function render() {
     if (renderer.xr.isPresenting) {
         processControllerInput();
     }
+
+    // Update rotation based on accumulated lon and lat
+    rotationGroup.rotation.y = THREE.MathUtils.degToRad(lon);
+    rotationGroup.rotation.x = THREE.MathUtils.degToRad(lat);
+
     renderer.render(scene, camera);
 }
 
@@ -339,8 +368,14 @@ function onKeyDown(event) {
             rotateSceneRight();
             event.preventDefault();
             break;
-        case 'ArrowDown':
         case 'ArrowUp':
+        case 'KeyW':
+            rotateSceneDown();
+            event.preventDefault();
+            break;
+        case 'ArrowDown':
+        case 'KeyS':
+            rotateSceneUp();
             event.preventDefault();
             break;
     }
@@ -348,10 +383,63 @@ function onKeyDown(event) {
 
 // Rotate the scene left
 function rotateSceneLeft() {
-    rotationGroup.rotation.y -= THREE.MathUtils.degToRad(rotation_angle);
+    lon -= rotation_angle; // Adjust lon instead of rotationGroup.rotation.y
 }
 
 // Rotate the scene right
 function rotateSceneRight() {
-    rotationGroup.rotation.y += THREE.MathUtils.degToRad(rotation_angle);
+    lon += rotation_angle; // Adjust lon instead of rotationGroup.rotation.y
+}
+
+// Optional: Rotate the scene up and down using keyboard
+function rotateSceneUp() {
+    lat += rotation_angle; // Adjust lat
+    // Clamp latitude to prevent flipping over the poles
+    lat = Math.max(-85, Math.min(85, lat));
+}
+
+function rotateSceneDown() {
+    lat -= rotation_angle; // Adjust lat
+    // Clamp latitude to prevent flipping over the poles
+    lat = Math.max(-85, Math.min(85, lat));
+}
+
+// Mouse and touch event handlers for rotation
+function onPointerDown(event) {
+    isUserInteracting = true;
+    event.preventDefault();
+
+    if (event.type === 'touchstart') {
+        onPointerDownMouseX = event.touches[0].pageX;
+        onPointerDownMouseY = event.touches[0].pageY;
+    } else {
+        onPointerDownMouseX = event.clientX;
+        onPointerDownMouseY = event.clientY;
+    }
+
+    onPointerDownLon = lon;
+    onPointerDownLat = lat;
+}
+
+function onPointerMove(event) {
+    if (isUserInteracting) {
+        let clientX, clientY;
+        if (event.type === 'touchmove') {
+            clientX = event.touches[0].pageX;
+            clientY = event.touches[0].pageY;
+        } else {
+            clientX = event.clientX;
+            clientY = event.clientY;
+        }
+
+        lon = (onPointerDownMouseX - clientX) * rotationSensitivityX + onPointerDownLon;
+        lat = (onPointerDownMouseY - clientY) * rotationSensitivityY + onPointerDownLat;
+
+        // Clamp latitude to prevent flipping over the poles
+        lat = Math.max(-85, Math.min(85, lat));
+    }
+}
+
+function onPointerUp() {
+    isUserInteracting = false;
 }
