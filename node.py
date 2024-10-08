@@ -151,32 +151,35 @@ class InterpolateEdges:
 
     def interpolate_edges(self, image, distance):
 
-        # Get the shape of the tensor
         smoothed = image.clone()
-        B, H, W, C = smoothed.shape
-        
+        _, _, W, _ = smoothed.shape
+
         # Ensure smoothing distance fits within the image
         distance = min(distance, W // 2)
 
-        # Iterate over each image in the batch
-        for b in range(B):
-            # Iterate over each channel in the image
-            for c in range(C):
-                # Iterate over each horizontal row of pixels
-                for h in range(H):
-                    # Get the left and right edge pixels
-                    left_edge = smoothed[b, h, 0, c]
-                    right_edge = smoothed[b, h, W-1, c]
-                    
-                    # Calculate the average value of the edges
-                    avg_value = (left_edge + right_edge) / 2.0
-                    
-                    # Interpolate the edge pixels
-                    offset_left = left_edge - avg_value
-                    offset_right = right_edge - avg_value
-                    for i in range(distance):
-                        blend_factor = (distance - i) / distance
-                        smoothed[b, h, i, c] -= blend_factor * offset_left
-                        smoothed[b, h, W - 1 - i, c] -= blend_factor * offset_right
+        # Compute the left and right edge pixels
+        left_edge = smoothed[:, :, 0, :]          # Shape: [B, H, C]
+        right_edge = smoothed[:, :, W - 1, :]     # Shape: [B, H, C]
+
+        # Calculate the average value of the edges
+        avg_value = (left_edge + right_edge) / 2.0  # Shape: [B, H, C]
+
+        # Compute offsets from the average
+        offset_left = (left_edge - avg_value).unsqueeze(2)   # Shape: [B, H, 1, C]
+        offset_right = (right_edge - avg_value).unsqueeze(2) # Shape: [B, H, 1, C]
+
+        # Create blend factors
+        blend_factors = torch.linspace(1, 0, steps=distance, device=smoothed.device).view(1, 1, distance, 1)  # Shape: [1, 1, distance, 1]
+
+        # Compute adjustments
+        adjustment_left = blend_factors * offset_left  # Shape: [B, H, distance, C]
+        adjustment_right = blend_factors * offset_right  # Shape: [B, H, distance, C]
+
+        # Apply adjustments to the left edge
+        smoothed[:, :, :distance, :] -= adjustment_left
+
+        # Apply adjustments to the right edge
+        indices_right = W - 1 - torch.arange(distance, device=smoothed.device)
+        smoothed[:, :, indices_right, :] -= adjustment_right
 
         return (smoothed,)
