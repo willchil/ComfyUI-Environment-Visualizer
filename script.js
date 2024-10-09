@@ -28,6 +28,7 @@ let rotationSensitivityY = 0.1; // Vertical rotation sensitivity
 
 const controllers = []; // Array to hold controllers
 const controllerStates = new Map(); // Map to hold controller states
+const hands = []; // Array to hold hand controllers
 
 const max_lat = 85;
 
@@ -120,6 +121,15 @@ async function init() {
         controller.addEventListener('selectend', onSelectEnd);
         scene.add(controller);
         controllers.push(controller);
+    }
+
+    // Initialize hands for hand tracking
+    for (let i = 0; i <= 1; i++) {
+        const hand = renderer.xr.getHand(i);
+        hand.userData.isPinching = false;
+        hand.userData.isSelecting = false;
+        scene.add(hand);
+        hands.push(hand);
     }
 }
 
@@ -408,6 +418,79 @@ function processControllerInput() {
 
                     // Invert the angle to change rotation direction
                     lon = controller.userData.initialLon - angle;
+                }
+            }
+        });
+
+        // Handle hand tracking pinch gesture rotation
+        hands.forEach(hand => {
+            const indexTip = hand.joints['index-finger-tip'];
+            const thumbTip = hand.joints['thumb-tip'];
+
+            if (indexTip && thumbTip) {
+                // Compute the distance between the index tip and thumb tip
+                const distance = indexTip.position.distanceTo(thumbTip.position);
+                const pinchThreshold = 0.02; // Adjust the threshold as needed (e.g., 2 cm)
+
+                const wasPinching = hand.userData.isPinching;
+                const isPinching = distance < pinchThreshold;
+
+                if (isPinching && !wasPinching) {
+                    // Pinch started
+                    hand.userData.isPinching = true;
+                    onSelectStart({ target: hand });
+                } else if (!isPinching && wasPinching) {
+                    // Pinch ended
+                    hand.userData.isPinching = false;
+                    onSelectEnd({ target: hand });
+                }
+
+                // Handle rotation if the hand is selecting (pinching)
+                if (hand.userData.isSelecting) {
+                    if (hand.userData.needsInitialPosition) {
+                        // Record initial positions
+                        const initialHeadPosition = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+                        const wrist = hand.joints['wrist'];
+                        if (!wrist) return; // If wrist joint not available, skip
+                        const initialHandPosition = new THREE.Vector3().setFromMatrixPosition(wrist.matrixWorld);
+
+                        // Compute initial vector from head to hand
+                        const initialHandVector = new THREE.Vector3().subVectors(initialHandPosition, initialHeadPosition);
+
+                        // Project onto XZ plane
+                        initialHandVector.y = 0;
+                        if (initialHandVector.lengthSq() === 0) return; // Avoid division by zero
+                        initialHandVector.normalize();
+
+                        hand.userData.initialHandVectorXZ = initialHandVector;
+                        hand.userData.needsInitialPosition = false;
+                        hand.userData.initialLon = lon; // Store initial lon
+                    } else {
+                        // Get current positions
+                        const currentHeadPosition = new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+                        const wrist = hand.joints['wrist'];
+                        if (!wrist) return;
+                        const currentHandPosition = new THREE.Vector3().setFromMatrixPosition(wrist.matrixWorld);
+
+                        // Compute current vector from head to hand
+                        const currentHandVector = new THREE.Vector3().subVectors(currentHandPosition, currentHeadPosition);
+
+                        // Project onto XZ plane
+                        currentHandVector.y = 0;
+                        if (currentHandVector.lengthSq() === 0) return; // Avoid division by zero
+                        currentHandVector.normalize();
+
+                        // Compute angle difference between initial and current vectors
+                        const initialVector = hand.userData.initialHandVectorXZ;
+                        const dot = initialVector.dot(currentHandVector);
+                        const crossY = initialVector.x * currentHandVector.z - initialVector.z * currentHandVector.x; // Cross product in Y
+
+                        let angle = Math.atan2(crossY, dot); // Angle in radians
+                        angle = THREE.MathUtils.radToDeg(angle); // Convert to degrees
+
+                        // Invert the angle to change rotation direction
+                        lon = hand.userData.initialLon - angle;
+                    }
                 }
             }
         });
