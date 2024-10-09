@@ -93,11 +93,12 @@ async function init() {
 
     window.addEventListener('resize', onWindowResize, false);
 
-    // Recreate the mesh when entering VR
+    // Recreate the mesh when entering VR and reset latitudinal rotation
     renderer.xr.addEventListener('sessionstart', () => {
         if (meshDirty) {
             createEnvironmentMesh(); // Generate new mesh with updated settings
         }
+        lat = 0; // Reset latitudinal rotation when entering VR mode
     });
 
     // Event listener for keyboard input
@@ -499,6 +500,7 @@ function processControllerInput() {
 
 // Handle keyboard input
 function onKeyDown(event) {
+    const isVRPresenting = renderer.xr.isPresenting;
     switch (event.code) {
         case 'ArrowLeft':
         case 'KeyA':
@@ -512,13 +514,17 @@ function onKeyDown(event) {
             break;
         case 'ArrowUp':
         case 'KeyW':
-            rotateSceneDown();
-            event.preventDefault();
+            if (!isVRPresenting) {
+                rotateSceneDown();
+                event.preventDefault();
+            }
             break;
         case 'ArrowDown':
         case 'KeyS':
-            rotateSceneUp();
-            event.preventDefault();
+            if (!isVRPresenting) {
+                rotateSceneUp();
+                event.preventDefault();
+            }
             break;
     }
 }
@@ -576,10 +582,11 @@ function onPointerMove(event) {
         }
 
         lon = (onPointerDownMouseX - clientX) * rotationSensitivityX + onPointerDownLon;
-        lat = (onPointerDownMouseY - clientY) * rotationSensitivityY + onPointerDownLat;
 
-        // Clamp latitude to prevent flipping over the poles
-        lat = Math.max(-max_lat, Math.min(max_lat, lat));
+        if (!renderer.xr.isPresenting) {
+            lat = (onPointerDownMouseY - clientY) * rotationSensitivityY + onPointerDownLat;
+            lat = Math.max(-max_lat, Math.min(max_lat, lat)); // Clamp latitude to prevent flipping over the poles
+        }
     }
 }
 
